@@ -1,161 +1,179 @@
-#include <SFML/Graphics.hpp>
+#include <SDL2/SDL.h>
+#include <SDL2/SDL_audio.h>
 #include <iostream>
 #include <vector>
+#include <cstdlib>
 #include <ctime>
+#include <algorithm>
 
-// Game Constants
-const int WIDTH = 600, HEIGHT = 600;
-const int CELL_SIZE = 20;
-const int GRID_WIDTH = WIDTH / CELL_SIZE;
-const int GRID_HEIGHT = HEIGHT / CELL_SIZE;
+// Screen and grid settings
+const int SCREEN_WIDTH = 640;
+const int SCREEN_HEIGHT = 480;
+const int GRID_SIZE = 20;
 
-// Movement directions
+// Enumeration for snake direction
 enum Direction { UP, DOWN, LEFT, RIGHT };
 
-class Snake {
-public:
-    std::vector<sf::Vector2i> body;
-    Direction dir;
-    bool grow;
+// Utility function: Create an SDL_Rect of fixed grid size at (x, y)
+SDL_Rect createRect(int x, int y) {
+    SDL_Rect rect;
+    rect.x = x;
+    rect.y = y;
+    rect.w = GRID_SIZE;
+    rect.h = GRID_SIZE;
+    return rect;
+}
 
-    Snake() {
-        body.push_back({GRID_WIDTH / 2, GRID_HEIGHT / 2}); // Start at the center
-        dir = RIGHT;
-        grow = false;
-    }
+// Check if two rectangles collide (simple equality of grid positions)
+bool checkCollision(const SDL_Rect& a, const SDL_Rect& b) {
+    return a.x == b.x && a.y == b.y;
+}
 
-    void move() {
-        sf::Vector2i newHead = body.front(); // Copy the head position
-
-        // Move the head in the current direction
-        switch (dir) {
-            case UP:    newHead.y--; break;
-            case DOWN:  newHead.y++; break;
-            case LEFT:  newHead.x--; break;
-            case RIGHT: newHead.x++; break;
+// Generate food at a random location not on the snake
+SDL_Rect generateFood(const std::vector<SDL_Rect>& snake) {
+    SDL_Rect food;
+    bool onSnake;
+    do {
+        onSnake = false;
+        food.x = (rand() % (SCREEN_WIDTH / GRID_SIZE)) * GRID_SIZE;
+        food.y = (rand() % (SCREEN_HEIGHT / GRID_SIZE)) * GRID_SIZE;
+        // Check if food position overlaps any snake segment
+        for (const auto& segment : snake) {
+            if (checkCollision(food, segment)) {
+                onSnake = true;
+                break;
+            }
         }
+    } while (onSnake);
+    food.w = GRID_SIZE;
+    food.h = GRID_SIZE;
+    return food;
+}
 
-        // Collision detection
-        if (isCollidingWithWall(newHead) || isCollidingWithItself(newHead)) {
-            std::cout << "Game Over! You crashed. Try again!\n";
-            exit(0);
-        }
+int SDL_main(int argc, char* argv[]) {
+    // Seed random generator
+    srand(static_cast<unsigned int>(time(nullptr)));
 
-        // Add new head to the front
-        body.insert(body.begin(), newHead);
-
-        // If not growing, remove the tail
-        if (!grow) {
-            body.pop_back();
-        } else {
-            grow = false; // Reset growth flag
-        }
+    // Initialize SDL video subsystem
+    if (SDL_Init(SDL_INIT_VIDEO) < 0) {
+        std::cerr << "SDL could not initialize! SDL_Error: " 
+                  << SDL_GetError() << "\n";
+        return 1;
     }
 
-    void changeDirection(Direction newDir) {
-        // Prevent reversing direction (e.g., UP to DOWN)
-        if ((dir == UP && newDir != DOWN) || (dir == DOWN && newDir != UP) ||
-            (dir == LEFT && newDir != RIGHT) || (dir == RIGHT && newDir != LEFT)) {
-            dir = newDir;
-        }
+    // Create the game window
+    SDL_Window* window = SDL_CreateWindow("Snake Game",
+        SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
+        SCREEN_WIDTH, SCREEN_HEIGHT,
+        SDL_WINDOW_SHOWN);
+    if (!window) {
+        std::cerr << "Window could not be created! SDL_Error: " 
+                  << SDL_GetError() << "\n";
+        SDL_Quit();
+        return 1;
     }
 
-private:
-    bool isCollidingWithWall(const sf::Vector2i& pos) {
-        return (pos.x < 0 || pos.x >= GRID_WIDTH || pos.y < 0 || pos.y >= GRID_HEIGHT);
+    // Create the renderer for drawing
+    SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+    if (!renderer) {
+        std::cerr << "Renderer could not be created! SDL_Error: " 
+                  << SDL_GetError() << "\n";
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return 1;
     }
 
-    bool isCollidingWithItself(const sf::Vector2i& pos) {
-        for (const auto& segment : body) {
-            if (segment == pos) return true;
-        }
-        return false;
-    }
-};
+    // Set up the snake starting position 
+    std::vector<SDL_Rect> snake = { createRect(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2) };
+    // Generate the first food location
+    SDL_Rect food = generateFood(snake);
+    // Initial direction is RIGHT
+    Direction dir = RIGHT;
 
-class Food {
-public:
-    sf::Vector2i position;
+    bool quit = false;
+    SDL_Event e;
+    int delay = 100;          // current delay between moves in milliseconds
+    const int initialDelay = 100; // starting delay
 
-    Food() {
-        respawn();
-    }
-
-    void respawn(const std::vector<sf::Vector2i>& snakeBody = {}) {
-        do {
-            position.x = rand() % GRID_WIDTH;
-            position.y = rand() % GRID_HEIGHT;
-        } while (isOnSnake(snakeBody)); // Ensure food doesn't spawn inside the snake
-    }
-
-private:
-    bool isOnSnake(const std::vector<sf::Vector2i>& snakeBody) {
-        for (const auto& segment : snakeBody) {
-            if (segment == position) return true;
-        }
-        return false;
-    }
-};
-
-int main() {
-    srand(static_cast<unsigned>(time(0))); // Seed random number generator
-
-    sf::RenderWindow window(sf::VideoMode(WIDTH, HEIGHT), "Snake Game");
-    window.setFramerateLimit(10); // Control game speed
-
-    Snake snake;
-    Food food;
-
-    // Visual representation of the snake
-    sf::RectangleShape snakeBlock(sf::Vector2f(CELL_SIZE - 2, CELL_SIZE - 2));
-    snakeBlock.setFillColor(sf::Color::Green);
-
-    // Visual representation of the food
-    sf::RectangleShape foodBlock(sf::Vector2f(CELL_SIZE - 2, CELL_SIZE - 2));
-    foodBlock.setFillColor(sf::Color::Red);
-
-    while (window.isOpen()) {
-        // Handle input events
-        sf::Event event;
-        while (window.pollEvent(event)) {
-            if (event.type == sf::Event::Closed)
-                window.close();
-
-            if (event.type == sf::Event::KeyPressed) {
-                switch (event.key.code) {
-                    case sf::Keyboard::Up:    snake.changeDirection(UP); break;
-                    case sf::Keyboard::Down:  snake.changeDirection(DOWN); break;
-                    case sf::Keyboard::Left:  snake.changeDirection(LEFT); break;
-                    case sf::Keyboard::Right: snake.changeDirection(RIGHT); break;
-                    default: break;
+    // Main game loop
+    while (!quit) {
+        // Process events
+        while (SDL_PollEvent(&e)) {
+            if (e.type == SDL_QUIT) {
+                quit = true;
+            }
+            else if (e.type == SDL_KEYDOWN) {
+                // Change snake direction 
+                switch (e.key.keysym.sym) {
+                    case SDLK_UP:    if (dir != DOWN)  dir = UP; break;
+                    case SDLK_DOWN:  if (dir != UP)    dir = DOWN; break;
+                    case SDLK_LEFT:  if (dir != RIGHT) dir = LEFT; break;
+                    case SDLK_RIGHT: if (dir != LEFT)  dir = RIGHT; break;
                 }
             }
         }
 
-        // Move the snake
-        snake.move();
-
-        // Check if the snake eats food
-        if (snake.body.front() == food.position) {
-            snake.grow = true;
-            food.respawn(snake.body); // Avoid food spawning inside the snake
+        // Calculate new head position based on current direction
+        SDL_Rect newHead = snake.front();
+        switch (dir) {
+            case UP:    newHead.y -= GRID_SIZE; break;
+            case DOWN:  newHead.y += GRID_SIZE; break;
+            case LEFT:  newHead.x -= GRID_SIZE; break;
+            case RIGHT: newHead.x += GRID_SIZE; break;
         }
 
-        // Rendering
-        window.clear();
-
-        // Draw food
-        foodBlock.setPosition(food.position.x * CELL_SIZE, food.position.y * CELL_SIZE);
-        window.draw(foodBlock);
-
-        // Draw snake
-        for (const auto& segment : snake.body) {
-            snakeBlock.setPosition(segment.x * CELL_SIZE, segment.y * CELL_SIZE);
-            window.draw(snakeBlock);
+        // Check collision with the walls
+        if (newHead.x < 0 || newHead.x >= SCREEN_WIDTH ||
+            newHead.y < 0 || newHead.y >= SCREEN_HEIGHT) {
+            quit = true;
+            break;
         }
 
-        window.display();
+        // Check collision with itself
+        for (const auto& segment : snake) {
+            if (checkCollision(newHead, segment)) {
+                quit = true;
+                break;
+            }
+        }
+        if (quit) break;
+
+        // Insert new head at the front of the snake
+        snake.insert(snake.begin(), newHead);
+
+
+        if (checkCollision(newHead, food)) {
+            food = generateFood(snake);
+        } else {
+            snake.pop_back();
+        }
+
+        // Draw background
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+
+        // Draw food 
+        SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255);
+        SDL_RenderFillRect(renderer, &food);
+
+        // Draw snake 
+        SDL_SetRenderDrawColor(renderer, 0, 255, 0, 255);
+        for (const auto& segment : snake) {
+            SDL_RenderFillRect(renderer, &segment);
+        }
+
+        SDL_RenderPresent(renderer);
+
+        // --- Delay Calculation ---
+        int computedDelay = initialDelay - static_cast<int>(snake.size() / 5) * 10;
+        delay = std::max(50, computedDelay);
+        SDL_Delay(delay);
     }
+
+    // Clean up resources
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroyWindow(window);
+    SDL_Quit();
 
     return 0;
 }
